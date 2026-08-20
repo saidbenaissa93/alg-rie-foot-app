@@ -3,17 +3,21 @@ import sqlite3
 conn = sqlite3.connect("data/algerie_foot.db")
 cursor = conn.cursor()
 
+cursor.execute("DROP VIEW IF EXISTS joueurs_complets")
+
 cursor.execute("""
-CREATE VIEW IF NOT EXISTS joueurs_complets AS
-SELECT 
+CREATE VIEW joueurs_complets AS
+SELECT
     p.id,
     p.name,
     p.position,
-    p.birth_date,
+    ps.age,
     ps.current_club,
+    ps.market_value,
     ps.last_checked
 FROM players p
 LEFT JOIN player_status ps ON p.id = ps.player_id
+ORDER BY ps.market_value DESC
 """)
 
 conn.commit()
