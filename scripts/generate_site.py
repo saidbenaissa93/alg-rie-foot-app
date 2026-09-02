@@ -2,7 +2,7 @@ import sqlite3
 import json
 
 DB_PATH = "data/algerie_foot.db"
-OUTPUT_PATH = "site/index.html"
+OUTPUT_PATH = "docs/index.html"
 
 conn = sqlite3.connect(DB_PATH)
 cursor = conn.cursor()
