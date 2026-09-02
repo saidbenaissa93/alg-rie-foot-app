@@ -75,8 +75,20 @@ html_template = """<!DOCTYPE html>
 <title>Algérie Foot</title>
 <style>
     body { font-family: -apple-system, Arial, sans-serif; background: #0d1117; color: #e6edf3; margin: 0; padding: 0; }
-    header { background: linear-gradient(135deg, #006633, #d21034); padding: 24px; text-align: center; }
-    header h1 { margin: 0; font-size: 28px; }
+
+    .flag-banner { position: relative; display: flex; height: 140px; width: 100%; }
+    .flag-banner .half { flex: 1; }
+    .flag-banner .half.green { background: #006233; }
+    .flag-banner .half.white { background: #f2f2ee; }
+    .flag-banner svg {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: 110px;
+        height: 110px;
+    }
+
     nav { display: flex; justify-content: center; background: #161b22; border-bottom: 1px solid #30363d; flex-wrap: wrap; }
     nav button { background: none; border: none; color: #8b949e; padding: 14px 20px; font-size: 15px; cursor: pointer; border-bottom: 3px solid transparent; }
     nav button.active { color: #fff; border-bottom-color: #d21034; }
@@ -112,10 +124,14 @@ html_template = """<!DOCTYPE html>
 </head>
 <body>
 
-<header>
-    <h1>Algérie Foot</h1>
-    <p>Suivi des joueurs, résultats et calendrier de l'équipe nationale</p>
-</header>
+<div class="flag-banner">
+    <div class="half green"></div>
+    <div class="half white"></div>
+    <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+        <path d="M 62 20 A 32 32 0 1 0 62 80 A 26 26 0 1 1 62 20 Z" fill="#D21034"/>
+        <path d="M50 38 L53.5 48.5 L64.5 48.5 L55.7 55 L59 65.5 L50 59 L41 65.5 L44.3 55 L35.5 48.5 L46.5 48.5 Z" fill="#D21034"/>
+    </svg>
+</div>
 
 <nav>
     <button class="tab-btn active" data-tab="players">Joueurs</button>
@@ -253,7 +269,7 @@ function isUpcoming(m) {
 
 function renderMatches(list) {
     const upcoming = list.filter(isUpcoming);
-    const results = list.filter(m => !isUpcoming(m));
+    const results = list.filter(m => !isUpcoming(m)).reverse();
     document.querySelector('#upcomingTable tbody').innerHTML = upcoming.map(matchRowHTML).join('') || '<tr><td colspan="4">Aucun match à venir trouvé</td></tr>';
     document.querySelector('#resultsTable tbody').innerHTML = results.map(matchRowHTML).join('') || '<tr><td colspan="4">Aucun résultat trouvé</td></tr>';
 }
