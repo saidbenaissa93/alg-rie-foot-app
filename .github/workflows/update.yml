@@ -2,7 +2,8 @@ name: Update Algeria Foot Data
 
 on:
   schedule:
-    - cron: "0 4 * * *"   # tous les jours à 04h00 UTC
+    - cron: "0 6 * * *"    # 8h heure Algérie (UTC+1)
+    - cron: "0 18 * * *"   # 20h heure Algérie (UTC+1)
 
   workflow_dispatch:
 
