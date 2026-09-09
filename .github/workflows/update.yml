@@ -36,23 +36,6 @@ jobs:
           PROXY_PASS: ${{ secrets.PROXY_PASS }}
         run: python scripts/scrape_transfermarkt.py
 
-      - name: Run Futbin scraper
-        env:
-          PROXY_HOST: ${{ secrets.PROXY_HOST }}
-          PROXY_PORT: ${{ secrets.PROXY_PORT }}
-          PROXY_USER: ${{ secrets.PROXY_USER }}
-          PROXY_PASS: ${{ secrets.PROXY_PASS }}
-        run: python scripts/scrape_futbin.py
-        continue-on-error: true
-
-      - name: Upload debug screenshots
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: debug-screenshots
-          path: debug_page*.png
-          if-no-files-found: ignore
-
       - name: Run Wikipedia matches scraper
         run: python scripts/scrape_wiki_matches.py
 
