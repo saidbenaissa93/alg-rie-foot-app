@@ -1,26 +1,62 @@
+from playwright.sync_api import sync_playwright
+from playwright_stealth import stealth_sync
 import sqlite3
 import re
 import unicodedata
-import requests
 import time
 import os
-from bs4 import BeautifulSoup
 from datetime import date
 
 DB_PATH = "data/algerie_foot.db"
-headers = {"User-Agent": "Mozilla/5.0"}
 
 PROXY_HOST = os.getenv("PROXY_HOST")
 PROXY_PORT = os.getenv("PROXY_PORT")
 PROXY_USER = os.getenv("PROXY_USER")
 PROXY_PASS = os.getenv("PROXY_PASS")
+USE_PROXY = os.getenv("USE_PROXY", "true") == "true"
 
-proxies = None
-if PROXY_HOST and PROXY_PORT and os.getenv("USE_PROXY", "true") == "true":
-    proxy_url = f"http://{PROXY_USER}:{PROXY_PASS}@{PROXY_HOST}:{PROXY_PORT}"
-    proxies = {"http": proxy_url, "https": proxy_url}
+proxy_config = None
+if USE_PROXY and PROXY_HOST and PROXY_PORT:
+    proxy_config = {
+        "server": f"http://{PROXY_HOST}:{PROXY_PORT}",
+        "username": PROXY_USER,
+        "password": PROXY_PASS,
+    }
 
 BASE_URL = "https://www.transfermarkt.us/spieler-statistik/wertvollstespieler/marktwertetop/plus/0/ajax/ahrgang/0/land_id/4/kontinent_id/0/jahr/0/yt0/Show/0//page/{page}"
+
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
+EXTRACT_ROWS_JS = """
+() => {
+    const table = document.querySelector('table.items');
+    if (!table) return null;
+    const tbody = table.querySelector('tbody');
+    if (!tbody) return null;
+    const rows = Array.from(tbody.children).filter(el => el.tagName === 'TR');
+    return rows.map(row => {
+        const tds = Array.from(row.children).filter(el => el.tagName === 'TD');
+        const nameLink = row.querySelector('td.hauptlink a');
+        const name = nameLink ? nameLink.textContent.trim() : null;
+        const age = tds[2] ? tds[2].textContent.trim() : null;
+        let club = null;
+        if (tds[4]) {
+            const img = tds[4].querySelector('img');
+            club = img ? img.getAttribute('title') : null;
+        }
+        const marketValueText = tds[5] ? tds[5].textContent.trim() : null;
+        let position = null;
+        const inline = row.querySelector('table.inline-table');
+        if (inline) {
+            const irows = inline.querySelectorAll('tr');
+            if (irows.length > 1) {
+                position = irows[1].textContent.trim();
+            }
+        }
+        return { name, age, club, marketValueText, position };
+    });
+}
+"""
 
 def normalize(name):
     name = re.sub(r"\(.*?\)", "", name)
@@ -56,96 +92,90 @@ matched = 0
 created = 0
 total_players = 0
 
-# --- Scraping des pages ---
-for page in range(1, 5):
-    if total_players >= 100:
-        break
+with sync_playwright() as p:
+    browser = p.chromium.launch(headless=True, proxy=proxy_config)
 
-    url = BASE_URL.format(page=page)
-    print(f"Page {page}...")
-    response = requests.get(url, headers=headers, proxies=proxies, timeout=30)
-    soup = BeautifulSoup(response.text, "html.parser")
-
-    table = soup.find("table", {"class": "items"})
-    if not table:
-        print(f"  Aucun tableau trouvé sur la page {page}")
-        print(f"  Code HTTP : {response.status_code}")
-        print(f"  Headers : {dict(response.headers)}")
-        print(f"  Longueur réponse : {len(response.text)} caractères")
-        print(f"  Aperçu de la réponse : {response.text[:500]}")
-        continue
-
-    rows = table.find("tbody").find_all("tr", recursive=False)
-
-    for row in rows:
+    for page_num in range(1, 5):
         if total_players >= 100:
             break
 
-        name_tag = row.find("td", {"class": "hauptlink"})
-        if not name_tag:
-            continue
-        link = name_tag.find("a")
-        name = link.get_text(strip=True) if link else None
-        if not name:
+        print(f"Page {page_num}...")
+
+        context = browser.new_context(user_agent=USER_AGENT, viewport={"width": 1280, "height": 800})
+        page = context.new_page()
+        stealth_sync(page)
+
+        url = BASE_URL.format(page=page_num)
+        page.goto(url, timeout=30000, wait_until="domcontentloaded")
+
+        try:
+            page.wait_for_selector("table.items tbody tr", timeout=15000)
+            page.wait_for_timeout(1500)
+            rows_data = page.evaluate(EXTRACT_ROWS_JS)
+        except Exception as e:
+            print(f"  Aucun tableau trouvé sur la page {page_num} : {e}")
+            try:
+                print(f"  Titre de la page : {page.title()}")
+                print(f"  Aperçu du HTML : {page.content()[:500]}")
+            except Exception as inner_e:
+                print(f"  Impossible de lire le contenu de la page : {inner_e}")
+            rows_data = None
+
+        context.close()
+
+        if not rows_data:
+            time.sleep(2)
             continue
 
-        all_tds = row.find_all("td", recursive=False)
+        for row in rows_data:
+            if total_players >= 100:
+                break
 
-        # Structure confirmée : [0]=rang [1]=nom+poste [2]=age [3]=nationalité [4]=club [5]=valeur
-        age = None
-        if len(all_tds) > 2:
-            age_text = all_tds[2].get_text(strip=True)
-            if age_text.isdigit():
+            name = row.get("name")
+            if not name:
+                continue
+
+            age = None
+            age_text = row.get("age")
+            if age_text and age_text.isdigit():
                 age = int(age_text)
 
-        club = None
-        if len(all_tds) > 4:
-            club_img = all_tds[4].find("img")
-            if club_img:
-                club = club_img.get("title")
+            club = row.get("club")
+            market_value = parse_market_value(row.get("marketValueText"))
+            position = row.get("position")
 
-        market_value = None
-        if len(all_tds) > 5:
-            market_value = parse_market_value(all_tds[5].get_text(strip=True))
+            key = normalize(name)
+            player_id = existing_by_normalized_name.get(key)
 
-        # Poste : cherché dans toute la ligne (pas seulement dans name_tag)
-        position = None
-        inline_table = row.find("table", {"class": "inline-table"})
-        if inline_table:
-            rows_inline = inline_table.find_all("tr")
-            if len(rows_inline) > 1:
-                position = rows_inline[1].get_text(strip=True)
+            if player_id:
+                cursor.execute("UPDATE players SET position = COALESCE(?, position) WHERE id = ?",
+                                (position, player_id))
+                matched += 1
+            else:
+                cursor.execute("SELECT MIN(id) FROM players")
+                min_id = cursor.fetchone()[0] or 0
+                player_id = min(min_id, 0) - 1
+                cursor.execute("INSERT INTO players (id, name, position) VALUES (?, ?, ?)",
+                                (player_id, name, position))
+                existing_by_normalized_name[key] = player_id
+                created += 1
 
-        key = normalize(name)
-        player_id = existing_by_normalized_name.get(key)
+            cursor.execute("""
+                INSERT INTO player_status (player_id, current_club, age, market_value, last_checked)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(player_id) DO UPDATE SET
+                    current_club = excluded.current_club,
+                    age = excluded.age,
+                    market_value = excluded.market_value,
+                    last_checked = excluded.last_checked
+            """, (player_id, club, age, market_value, date.today().isoformat()))
 
-        if player_id:
-            cursor.execute("UPDATE players SET position = COALESCE(?, position) WHERE id = ?",
-                            (position, player_id))
-            matched += 1
-        else:
-            cursor.execute("SELECT MIN(id) FROM players")
-            min_id = cursor.fetchone()[0] or 0
-            player_id = min(min_id, 0) - 1
-            cursor.execute("INSERT INTO players (id, name, position) VALUES (?, ?, ?)",
-                            (player_id, name, position))
-            existing_by_normalized_name[key] = player_id
-            created += 1
+            total_players += 1
 
-        cursor.execute("""
-            INSERT INTO player_status (player_id, current_club, age, market_value, last_checked)
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(player_id) DO UPDATE SET
-                current_club = excluded.current_club,
-                age = excluded.age,
-                market_value = excluded.market_value,
-                last_checked = excluded.last_checked
-        """, (player_id, club, age, market_value, date.today().isoformat()))
+        conn.commit()
+        time.sleep(2)
 
-        total_players += 1
-
-    conn.commit()
-    time.sleep(2)
+    browser.close()
 
 conn.close()
 print(f"\nTotal traité : {total_players}")

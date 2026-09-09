@@ -34,7 +34,6 @@ jobs:
           PROXY_PORT: ${{ secrets.PROXY_PORT }}
           PROXY_USER: ${{ secrets.PROXY_USER }}
           PROXY_PASS: ${{ secrets.PROXY_PASS }}
-          USE_PROXY: "false"
         run: python scripts/scrape_transfermarkt.py
 
       - name: Run Futbin scraper

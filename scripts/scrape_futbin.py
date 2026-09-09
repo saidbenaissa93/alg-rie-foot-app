@@ -1,4 +1,5 @@
 from playwright.sync_api import sync_playwright
+from playwright_stealth import stealth_sync
 import sqlite3
 import random
 import time
@@ -96,6 +97,7 @@ with sync_playwright() as p:
 
         context = browser.new_context(user_agent=USER_AGENT, viewport={"width": 1280, "height": 800})
         page = context.new_page()
+        stealth_sync(page)
 
         url = BASE_URL.format(page=page_num)
         page.goto(url, timeout=30000, wait_until="domcontentloaded")
@@ -108,7 +110,12 @@ with sync_playwright() as p:
             total += found
         except Exception as e:
             print(f"Échec page {page_num} :", e)
-            page.screenshot(path=f"debug_page{page_num}.png")
+            try:
+                print(f"  Titre de la page : {page.title()}")
+                content_preview = page.content()[:500]
+                print(f"  Aperçu du HTML : {content_preview}")
+            except Exception as inner_e:
+                print(f"  Impossible de lire le contenu de la page : {inner_e}")
             found = 0
 
         context.close()
