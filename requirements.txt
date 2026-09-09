@@ -2,6 +2,6 @@ requests
 python-dotenv
 beautifulsoup4
 playwright
-setuptools
+setuptools<81
 playwright-stealth==1.0.6
  
