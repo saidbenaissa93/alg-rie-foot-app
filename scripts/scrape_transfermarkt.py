@@ -3,11 +3,22 @@ import re
 import unicodedata
 import requests
 import time
+import os
 from bs4 import BeautifulSoup
 from datetime import date
 
 DB_PATH = "data/algerie_foot.db"
 headers = {"User-Agent": "Mozilla/5.0"}
+
+PROXY_HOST = os.getenv("PROXY_HOST")
+PROXY_PORT = os.getenv("PROXY_PORT")
+PROXY_USER = os.getenv("PROXY_USER")
+PROXY_PASS = os.getenv("PROXY_PASS")
+
+proxies = None
+if PROXY_HOST and PROXY_PORT:
+    proxy_url = f"http://{PROXY_USER}:{PROXY_PASS}@{PROXY_HOST}:{PROXY_PORT}"
+    proxies = {"http": proxy_url, "https": proxy_url}
 
 BASE_URL = "https://www.transfermarkt.us/spieler-statistik/wertvollstespieler/marktwertetop/plus/0/ajax/ahrgang/0/land_id/4/kontinent_id/0/jahr/0/yt0/Show/0//page/{page}"
 
@@ -52,7 +63,7 @@ for page in range(1, 5):
 
     url = BASE_URL.format(page=page)
     print(f"Page {page}...")
-    response = requests.get(url, headers=headers)
+    response = requests.get(url, headers=headers, proxies=proxies, timeout=30)
     soup = BeautifulSoup(response.text, "html.parser")
 
     table = soup.find("table", {"class": "items"})

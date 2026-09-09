@@ -2,9 +2,23 @@ from playwright.sync_api import sync_playwright
 import sqlite3
 import random
 import time
+import os
 
 DB_PATH = "data/algerie_foot.db"
 BASE_URL = "https://www.futbin.com/27/players?page={page}&nation=97&gender=men"
+
+PROXY_HOST = os.getenv("PROXY_HOST")
+PROXY_PORT = os.getenv("PROXY_PORT")
+PROXY_USER = os.getenv("PROXY_USER")
+PROXY_PASS = os.getenv("PROXY_PASS")
+
+proxy_config = None
+if PROXY_HOST and PROXY_PORT:
+    proxy_config = {
+        "server": f"http://{PROXY_HOST}:{PROXY_PORT}",
+        "username": PROXY_USER,
+        "password": PROXY_PASS,
+    }
 
 conn = sqlite3.connect(DB_PATH)
 cursor = conn.cursor()
@@ -74,7 +88,7 @@ def scrape_rows(page):
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
 with sync_playwright() as p:
-    browser = p.chromium.launch(headless=True)
+    browser = p.chromium.launch(headless=True, proxy=proxy_config)
 
     total = 0
     for page_num in range(1, 4):
