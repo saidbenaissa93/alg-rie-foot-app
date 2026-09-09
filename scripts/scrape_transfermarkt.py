@@ -69,6 +69,8 @@ for page in range(1, 5):
     table = soup.find("table", {"class": "items"})
     if not table:
         print(f"  Aucun tableau trouvé sur la page {page}")
+        print(f"  Code HTTP : {response.status_code}")
+        print(f"  Aperçu de la réponse : {response.text[:500]}")
         continue
 
     rows = table.find("tbody").find_all("tr", recursive=False)
