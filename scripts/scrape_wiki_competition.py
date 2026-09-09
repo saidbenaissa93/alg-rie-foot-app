@@ -12,6 +12,8 @@ EXCLUDED_ROUNDS = {
     "Did not qualify", "Did not enter", "Not a FIFA member",
     "Withdrew", "Banned", "To be determined", "Total"
 }
+# Libellés d'en-tête qui peuvent se glisser comme "fausse ligne" de données
+HEADER_LABELS = {"year", "round", "position", "pld", "w", "d", "l", "gf", "ga"}
 
 response = requests.get(url, headers=headers)
 soup = BeautifulSoup(response.text, "html.parser")
@@ -19,8 +21,11 @@ soup = BeautifulSoup(response.text, "html.parser")
 conn = sqlite3.connect(DB_PATH)
 cursor = conn.cursor()
 
+# On repart d'une table vide à chaque run pour éviter toute accumulation
+# de doublons quand le script est exécuté plusieurs fois (ex: cron 2x/jour)
+cursor.execute("DROP TABLE IF EXISTS competition_history")
 cursor.execute("""
-CREATE TABLE IF NOT EXISTS competition_history (
+CREATE TABLE competition_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     competition TEXT,
     year TEXT,
@@ -78,6 +83,14 @@ def parse_table_with_rowspan(table, num_cols):
         results.append(full_row)
     return results
 
+def is_header_row(row):
+    """Détecte une ligne qui est en fait l'en-tête du tableau (Year, Round, Position...)
+    et non une vraie ligne de résultat, peu importe sa position dans le tableau."""
+    if not row or not row[0]:
+        return False
+    first_cell = row[0].strip().lower()
+    return first_cell in HEADER_LABELS
+
 section = soup.find("section", {"id": "mwAzc"})
 if not section:
     print("Section 'Competitive record' introuvable")
@@ -106,6 +119,10 @@ else:
         rows_data = parse_table_with_rowspan(table, len(COLUMNS))
         for row in rows_data[1:]:
             if not row[0]:
+                continue
+
+            # Filtre les lignes d'en-tête qui se seraient glissées comme données
+            if is_header_row(row):
                 continue
 
             round_value = (row[1] or "").strip()
