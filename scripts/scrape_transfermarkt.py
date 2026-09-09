@@ -16,7 +16,7 @@ PROXY_USER = os.getenv("PROXY_USER")
 PROXY_PASS = os.getenv("PROXY_PASS")
 
 proxies = None
-if PROXY_HOST and PROXY_PORT:
+if PROXY_HOST and PROXY_PORT and os.getenv("USE_PROXY", "true") == "true":
     proxy_url = f"http://{PROXY_USER}:{PROXY_PASS}@{PROXY_HOST}:{PROXY_PORT}"
     proxies = {"http": proxy_url, "https": proxy_url}
 
@@ -70,6 +70,8 @@ for page in range(1, 5):
     if not table:
         print(f"  Aucun tableau trouvé sur la page {page}")
         print(f"  Code HTTP : {response.status_code}")
+        print(f"  Headers : {dict(response.headers)}")
+        print(f"  Longueur réponse : {len(response.text)} caractères")
         print(f"  Aperçu de la réponse : {response.text[:500]}")
         continue
 
