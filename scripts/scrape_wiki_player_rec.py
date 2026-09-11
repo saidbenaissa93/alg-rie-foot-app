@@ -15,16 +15,28 @@ cursor = conn.cursor()
 cursor.execute("DELETE FROM individual_records")
 conn.commit()
 
-def scrape_record_table(table_id, record_type):
-    table = soup.find("table", {"id": table_id})
+def find_table_after_heading(heading_text):
+    """Cherche un h3 (ou h4) dont le texte contient heading_text, puis renvoie
+    le premier tableau wikitable qui suit. Recherche par TEXTE plutôt que par
+    ID auto-généré (type 'mwAms'), car ces ID changent dès que la page
+    Wikipedia est modifiée alors que le texte du titre, lui, reste stable."""
+    for heading in soup.find_all(["h3", "h4"]):
+        if heading_text.lower() in heading.get_text(strip=True).lower():
+            for sib in heading.find_all_next():
+                if sib.name == "table" and "wikitable" in (sib.get("class") or []):
+                    return sib
+                if sib.name in ("h2", "h3"):
+                    break
+    return None
+
+def scrape_record_table(table, record_type):
     if not table:
-        print(f"Tableau '{table_id}' introuvable")
+        print(f"Tableau introuvable pour '{record_type}'")
         return 0
 
     rows = table.find("tbody").find_all("tr")[1:]  # on saute l'en-tête
 
-    # Mémorise les cellules en cours de "rowspan" par position de colonne
-    carry_over = {}  # {colonne_index: (valeur, lignes_restantes)}
+    carry_over = {}
     count = 0
 
     for row in rows:
@@ -33,7 +45,6 @@ def scrape_record_table(table_id, record_type):
         col_index = 0
         raw_index = 0
 
-        # Reconstruit la ligne complète en tenant compte des rowspans actifs
         while len(full_row) < 4:
             if col_index in carry_over and carry_over[col_index][1] > 0:
                 value, remaining = carry_over[col_index]
@@ -72,18 +83,12 @@ def scrape_record_table(table_id, record_type):
     conn.commit()
     return count
 
-n1 = scrape_record_table("mwAms", "appearances")
+appearances_table = find_table_after_heading("Most appearances")
+n1 = scrape_record_table(appearances_table, "appearances")
 print(f"{n1} joueurs enregistrés pour 'Most appearances'")
 
-# Pour "Top goalscorers", il faut trouver l'id de CE tableau précis
-goals_section = soup.find("section", {"id": "mwAr4"})
-goals_table = goals_section.find("table", {"class": "wikitable"}) if goals_section else None
-goals_table_id = goals_table.get("id") if goals_table else None
-
-if goals_table_id:
-    n2 = scrape_record_table(goals_table_id, "goals")
-    print(f"{n2} joueurs enregistrés pour 'Top goalscorers'")
-else:
-    print("Tableau 'Top goalscorers' introuvable")
+goals_table = find_table_after_heading("Top goalscorers")
+n2 = scrape_record_table(goals_table, "goals")
+print(f"{n2} joueurs enregistrés pour 'Top goalscorers'")
 
 conn.close()
