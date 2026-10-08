@@ -74,7 +74,6 @@ for t in tables:
     venue = tds[4].get_text(strip=True)
 
     if not match_date:
-        # Nettoie toute ancienne entrée incomplète/obsolète pour ce même match
         cursor.execute("""
             DELETE FROM team_matches
             WHERE team1 = ? AND team2 = ? AND venue = ?
@@ -90,8 +89,9 @@ for t in tables:
         AND (match_date IS NULL OR match_date LIKE 'TBD%')
     """, (team1, team2, venue))
 
+    # INSERT OR REPLACE pour mettre à jour le score si le match est passé
     cursor.execute("""
-        INSERT OR IGNORE INTO team_matches (match_date, competition, team1, score, team2, venue)
+        INSERT OR REPLACE INTO team_matches (match_date, competition, team1, score, team2, venue)
         VALUES (?, ?, ?, ?, ?, ?)
     """, (match_date, competition, team1, score, team2, venue))
     count += 1
