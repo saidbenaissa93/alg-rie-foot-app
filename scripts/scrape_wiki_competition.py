@@ -1,4 +1,5 @@
 import sqlite3
+import re
 import requests
 from bs4 import BeautifulSoup
 
@@ -6,149 +7,96 @@ DB_PATH = "data/algerie_foot.db"
 url = "https://en.wikipedia.org/wiki/Algeria_national_football_team"
 headers = {"User-Agent": "Mozilla/5.0"}
 
-COLUMNS = ["year", "round", "position", "played", "wins", "draws", "losses", "goals_for", "goals_against"]
-TARGET_COMPETITIONS = ["FIFA World Cup", "Africa Cup of Nations"]
-EXCLUDED_ROUNDS = {
-    "Did not qualify", "Did not enter", "Not a FIFA member",
-    "Withdrew", "Banned", "To be determined", "Total"
-}
-HEADER_LABELS = {"year", "round", "position", "pld", "w", "d", "l", "gf", "ga"}
+MONTHS = "January|February|March|April|May|June|July|August|September|October|November|December"
+
+def find_year_for_table(table):
+    for element in table.find_all_previous(["h3", "h2"]):
+        text = element.get_text(strip=True)
+        if re.fullmatch(r"20\d{2}", text):
+            return text
+    return None
+
+def parse_date_and_competition(text, table):
+    match = re.match(rf"(\d{{1,2}} (?:{MONTHS}) \d{{4}})(.*)", text)
+    if match:
+        return match.group(1).strip(), match.group(2).strip()
+
+    match = re.match(rf"(\d{{1,2}} (?:{MONTHS}))(.*)", text)
+    if match:
+        day_month = match.group(1).strip()
+        competition = match.group(2).strip()
+        year = find_year_for_table(table)
+        if year:
+            return f"{day_month} {year}", competition
+        return None, None
+
+    return None, None
 
 response = requests.get(url, headers=headers)
 soup = BeautifulSoup(response.text, "html.parser")
 
+tables = soup.find_all("table", {"class": "vevent"})
+print(f"{len(tables)} matchs trouvés\n")
+
 conn = sqlite3.connect(DB_PATH)
 cursor = conn.cursor()
 
-cursor.execute("DROP TABLE IF EXISTS competition_history")
 cursor.execute("""
-CREATE TABLE competition_history (
+CREATE TABLE IF NOT EXISTS team_matches (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    match_date TEXT,
     competition TEXT,
-    year TEXT,
-    round TEXT,
-    position TEXT,
-    played TEXT,
-    wins TEXT,
-    draws TEXT,
-    losses TEXT,
-    goals_for TEXT,
-    goals_against TEXT
+    team1 TEXT,
+    score TEXT,
+    team2 TEXT,
+    venue TEXT,
+    UNIQUE(match_date, team1, team2, venue)
 )
 """)
 conn.commit()
 
-def parse_table_with_rowspan(table, num_cols):
-    rows = table.find("tbody").find_all("tr")
-    carry_over = {}
-    results = []
-
-    for row in rows:
-        raw_cells = row.find_all(["td", "th"])
-        full_row = []
-        col_index = 0
-        raw_index = 0
-
-        while len(full_row) < num_cols:
-            if col_index in carry_over and carry_over[col_index][1] > 0:
-                value, remaining = carry_over[col_index]
-                full_row.append(value)
-                carry_over[col_index] = (value, remaining - 1)
-                col_index += 1
-                continue
-
-            if raw_index >= len(raw_cells):
-                full_row.append(None)
-                col_index += 1
-                continue
-
-            cell = raw_cells[raw_index]
-            text = cell.get_text(strip=True)
-            rowspan = int(cell.get("rowspan", 1))
-            colspan = int(cell.get("colspan", 1))
-
-            for _ in range(colspan):
-                if len(full_row) >= num_cols:
-                    break
-                full_row.append(text)
-                if rowspan > 1:
-                    carry_over[col_index] = (text, rowspan - 1)
-                col_index += 1
-
-            raw_index += 1
-
-        results.append(full_row)
-    return results
-
-def is_header_row(row):
-    if not row or not row[0]:
-        return False
-    first_cell = row[0].strip().lower()
-    return first_cell in HEADER_LABELS
-
-# --- Recherche robuste de la section "Competitive record" ---
-# On cherche par TEXTE du titre plutôt que par ID auto-généré par Wikipedia
-# (ces ID type "mwAzc" changent dès que l'article est modifié, donc
-# fragiles à long terme — le texte du titre, lui, change rarement).
-headings = []
-target_h2 = None
-for h2 in soup.find_all("h2"):
-    if "Competitive record" in h2.get_text():
-        target_h2 = h2
-        break
-
-if not target_h2:
-    print("Section 'Competitive record' introuvable")
-else:
-    # On collecte tous les h3 qui suivent ce h2, jusqu'au prochain h2
-    for sib in target_h2.find_all_next():
-        if sib.name == "h2":
-            break
-        if sib.name == "h3":
-            headings.append(sib)
-
-total = 0
+count = 0
 skipped = 0
-
-for h in headings:
-    competition_name = h.get_text(strip=True).replace("[edit]", "").strip()
-
-    if competition_name not in TARGET_COMPETITIONS:
+for t in tables:
+    row = t.find("tr", style=lambda s: s and "vertical-align:top" in s)
+    if not row:
+        continue
+    tds = row.find_all("td", recursive=False)
+    if len(tds) < 5:
         continue
 
-    table = None
-    for sib in h.find_all_next():
-        if sib.name == "table" and "wikitable" in (sib.get("class") or []):
-            table = sib
-            break
-        if sib.name == "h3":
-            break
+    raw_text = tds[0].get_text(strip=True)
+    match_date, competition = parse_date_and_competition(raw_text, t)
 
-    if not table:
+    team1 = tds[1].get_text(strip=True)
+    score = tds[2].get_text(strip=True)
+    team2 = tds[3].get_text(strip=True)
+    venue = tds[4].get_text(strip=True)
+
+    if not match_date:
+        cursor.execute("""
+            DELETE FROM team_matches
+            WHERE team1 = ? AND team2 = ? AND venue = ?
+            AND (match_date IS NULL OR match_date LIKE 'TBD%')
+        """, (team1, team2, venue))
+        skipped += 1
         continue
 
-    rows_data = parse_table_with_rowspan(table, len(COLUMNS))
-    for row in rows_data[1:]:
-        if not row[0]:
-            continue
+    # Supprime toute ancienne version incomplète (TBD) de ce même match
+    cursor.execute("""
+        DELETE FROM team_matches
+        WHERE team1 = ? AND team2 = ? AND venue = ?
+        AND (match_date IS NULL OR match_date LIKE 'TBD%')
+    """, (team1, team2, venue))
 
-        if is_header_row(row):
-            continue
-
-        round_value = (row[1] or "").strip()
-        if any(excluded in round_value for excluded in EXCLUDED_ROUNDS):
-            skipped += 1
-            continue
-
-        values = (competition_name, *row[:9])
-        cursor.execute(f"""
-            INSERT INTO competition_history
-            (competition, {', '.join(COLUMNS)})
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, values)
-        total += 1
+    # INSERT OR REPLACE pour mettre à jour le score si le match est passé
+    cursor.execute("""
+        INSERT OR REPLACE INTO team_matches (match_date, competition, team1, score, team2, venue)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (match_date, competition, team1, score, team2, venue))
+    count += 1
 
 conn.commit()
-print(f"{total} lignes enregistrées, {skipped} lignes exclues (non-participation)")
-
 conn.close()
+print(f"{count} matchs enregistrés (dates complètes)")
+print(f"{skipped} lignes ignorées (date incomplète, sans jour)")
