@@ -1,8 +1,11 @@
 import sqlite3
 import json
+import os
 
 DB_PATH = "data/algerie_foot.db"
-OUTPUT_PATH = "docs/index.html"
+OUTPUT_PATH = "site/index.html"
+
+os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
 
 conn = sqlite3.connect(DB_PATH)
 cursor = conn.cursor()
@@ -49,15 +52,28 @@ competitions = [
     for r in cursor.fetchall()
 ]
 
-cursor.execute("""
-    SELECT player_name, rating, position, pace, shooting, passing, dribbling, defending, physical, image_url, bg_url, club_logo_url, nation_flag_url
+# Les colonnes is_holo / rating_color / card_color n'existent qu'après un nouveau scraping Futbin :
+# si elles manquent encore, on les remplace par NULL pour que le site se génère quand même.
+cursor.execute("PRAGMA table_info(fifa_cards)")
+fifa_cols = {row[1] for row in cursor.fetchall()}
+
+
+def fifa_col(name):
+    return name if name in fifa_cols else f"NULL AS {name}"
+
+
+cursor.execute(f"""
+    SELECT player_name, rating, position, pace, shooting, passing, dribbling, defending, physical,
+           image_url, bg_url, club_logo_url, nation_flag_url,
+           {fifa_col('is_holo')}, {fifa_col('rating_color')}, {fifa_col('card_color')}
     FROM fifa_cards
     ORDER BY rating DESC
 """)
 fifa_cards = [
     {"name": r[0], "rating": r[1], "position": r[2], "pac": r[3], "sho": r[4],
      "pas": r[5], "dri": r[6], "de": r[7], "phy": r[8], "image": r[9], "bg": r[10],
-     "club_logo": r[11], "nation_flag": r[12]}
+     "club_logo": r[11], "nation_flag": r[12],
+     "holo": r[13], "rc": r[14], "cc": r[15]}
     for r in cursor.fetchall()
 ]
 
@@ -66,12 +82,13 @@ conn.close()
 data_json = json.dumps({
     "players": players, "matches": matches, "records": records,
     "competitions": competitions, "fifa_cards": fifa_cards
-}, ensure_ascii=False)
+}, ensure_ascii=False).replace("</", "<\\/")
 
 html_template = """<!DOCTYPE html>
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Algérie Foot</title>
 <style>
     body { font-family: -apple-system, Arial, sans-serif; background: #0d1117; color: #e6edf3; margin: 0; padding: 0; }
@@ -108,13 +125,32 @@ html_template = """<!DOCTYPE html>
     h2 { border-bottom: 2px solid #d21034; padding-bottom: 6px; margin-top: 32px; }
     h2:first-child { margin-top: 0; }
 
+    /* ---------- CARTES FIFA ---------- */
     #fifaCards { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 20px; }
     .fifa-card-wrapper { background: #161b22; border-radius: 10px; padding: 12px; text-align: center; }
-    .fifa-card { position: relative; width: 130px; height: 165px; margin: 0 auto; }
+    /* --mx / --my : centre horizontal et haut du bloc "rating + poste" (à ajuster au pixel près) */
+    /* --pw / --pt : largeur et position du haut de la photo du joueur */
+    .fifa-card { position: relative; width: 130px; height: 165px; margin: 0 auto; --rc: #443a22; --mx: 34px; --my: 34px; --pw: 55%; --pt: 20%; }
+    .fifa-card.special { --mx: 40px; --my: 38px; --pw: 74%; --pt: 15%; }   /* cadre plus épais, photo plus cadrée large */
     .fifa-card img.bg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; }
-    .fifa-card img.photo { position: absolute; top: 20%; left: 50%; transform: translateX(-50%); width: 55%; z-index: 2; }
-    .fifa-card .rating-text { position: absolute; top: 30px; left: 14px; font-weight: 800; font-size: 20px; line-height: 1; color: #3a2a0d; z-index: 3; text-align: center; }
-    .fifa-card .pos-text { position: absolute; top: 55px; left: 14px; font-size: 11px; line-height: 1; color: #3a2a0d; font-weight: 700; z-index: 3; text-align: center; }
+    .fifa-card img.photo { position: absolute; top: var(--pt); left: 50%; transform: translateX(-50%); width: var(--pw); z-index: 2; }
+    .fifa-card .card-meta {
+        position: absolute; top: var(--my); left: var(--mx); transform: translateX(-50%);
+        display: flex; flex-direction: column; align-items: center; gap: 3px;
+        color: var(--rc); line-height: 1; z-index: 3;
+    }
+    .fifa-card .rating-text { font-weight: 800; font-size: 20px; }
+    .fifa-card .pos-text { font-size: 11px; font-weight: 700; }
+    .fifa-card .pos-text.long { font-size: 9px; }   /* CAM++, RW++ ... */
+    /* cartes à texte clair (spéciales) : un léger contour pour rester lisible sur l'art */
+    .fifa-card.light-text .card-meta,
+    .fifa-card.special .card-meta { text-shadow: 0 1px 3px rgba(0,0,0,0.85); }
+    /* cartes holo : reflet qui pulse sur le fond de carte */
+    .fifa-card.holo img.bg { animation: holoPulse 3s ease-in-out infinite; }
+    @keyframes holoPulse {
+        0%, 100% { filter: brightness(1) saturate(1); }
+        50%      { filter: brightness(1.25) saturate(1.35) hue-rotate(12deg); }
+    }
     .fifa-card-name { font-size: 13px; margin-top: 8px; font-weight: 600; }
     .fifa-badges { display: flex; justify-content: center; align-items: center; gap: 8px; margin-top: 6px; }
     .fifa-badges img { height: 18px; width: auto; }
@@ -317,13 +353,52 @@ const afcon = DATA.competitions.filter(c => c.competition === 'Africa Cup of Nat
 document.querySelector('#worldCupTable tbody').innerHTML = worldCup.map(compRowHTML).join('') || '<tr><td colspan="9">Aucune donnée</td></tr>';
 document.querySelector('#afconTable tbody').innerHTML = afcon.map(compRowHTML).join('') || '<tr><td colspan="9">Aucune donnée</td></tr>';
 
-document.querySelector('#fifaCards').innerHTML = DATA.fifa_cards.map(c => `
+// ---------- Cartes FIFA ----------
+// Un gabarit de carte (or, argent, TOTW, Destined for Glory...) a une URL contenant /cards/.
+const isTemplate = u => (u || '').includes('/cards/');
+
+// Vrai si la couleur de texte de la carte est claire (cartes spéciales) : on ajoute alors un contour.
+function isLightColor(hex) {
+    const m = /^#?([0-9a-f]{6})$/i.exec((hex || '').trim());
+    if (!m) return false;
+    const n = parseInt(m[1], 16);
+    const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+    return (0.299 * r + 0.587 * g + 0.114 * b) > 150;
+}
+
+// Nom du gabarit, ex. "0_gold", "22_destined_for_glory" : tout ce qui n'est pas or/argent/bronze est "spécial".
+function templateName(u) {
+    const file = (u || '').split('/cards/')[1] || '';
+    return file.split('?')[0].replace('tiny/', '').replace('.png', '');
+}
+const isSpecialTemplate = u => {
+    const n = templateName(u);
+    return n !== '' && !/^[0-9]+_(gold|silver|bronze)$/.test(n);
+};
+
+document.querySelector('#fifaCards').innerHTML = DATA.fifa_cards.map(c => {
+    // Compatible avec d'anciennes données où `image` contenait le gabarit et `bg` était vide.
+    const bgSrc = c.bg || (isTemplate(c.image) ? c.image : null);
+    const faceSrc = isTemplate(c.image) ? null : c.image;
+    const special = isSpecialTemplate(bgSrc);
+    // Sans couleur scrapée (ancienne base), les cartes spéciales (art sombre) ont un texte clair.
+    const rc = c.rc || (special ? '#FFFFFF' : '#443a22');
+    const cls = [
+        'fifa-card',
+        c.holo ? 'holo' : '',
+        special ? 'special' : '',
+        isLightColor(rc) ? 'light-text' : ''
+    ].filter(Boolean).join(' ');
+    const posCls = (c.position || '').length > 3 ? 'pos-text long' : 'pos-text';
+    return `
     <div class="fifa-card-wrapper">
-        <div class="fifa-card">
-            ${c.bg ? `<img class="bg" src="${c.bg}" alt="">` : ''}
-            <span class="rating-text">${c.rating}</span>
-            <span class="pos-text">${c.position}</span>
-            ${c.image ? `<img class="photo" src="${c.image}" alt="${c.name}">` : ''}
+        <div class="${cls}" style="--rc:${rc}">
+            ${bgSrc ? `<img class="bg" src="${bgSrc}" alt="">` : ''}
+            <div class="card-meta">
+                <span class="rating-text">${c.rating}</span>
+                <span class="${posCls}">${c.position}</span>
+            </div>
+            ${faceSrc ? `<img class="photo" src="${faceSrc}" alt="${c.name}">` : ''}
         </div>
         <div class="fifa-card-name">${c.name}</div>
         <div class="fifa-badges">
@@ -335,8 +410,8 @@ document.querySelector('#fifaCards').innerHTML = DATA.fifa_cards.map(c => `
             <div>PAS <b>${c.pas}</b></div><div>DRI <b>${c.dri}</b></div>
             <div>DEF <b>${c.de}</b></div><div>PHY <b>${c.phy}</b></div>
         </div>
-    </div>
-`).join('');
+    </div>`;
+}).join('');
 
 let sortDir = {};
 document.querySelectorAll('#playersTable th').forEach(th => {
@@ -362,5 +437,5 @@ html_output = html_template.replace("__DATA_JSON__", data_json)
 with open(OUTPUT_PATH, "w", encoding="utf-8") as f:
     f.write(html_output)
 
-print(f"Site généré avec succès : {OUTPUT_PATH}")
+print(f"Site généré avec succès : {OUTPUT_PATH}  [template cartes FIFA v3 : card-meta]")
 print(f"{len(players)} joueurs, {len(matches)} matchs, {len(records)} records, {len(competitions)} lignes compétitions, {len(fifa_cards)} cartes FIFA")
